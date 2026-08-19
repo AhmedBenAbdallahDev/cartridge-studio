@@ -1,8 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, use } from 'react'
 import * as THREE from 'three'
 import { useGLTF, useTexture } from '@react-three/drei'
 
-const MODEL_URL = '/new-n64cart.glb'
+// 3D asset URLs are served at runtime from the serverless config
+// endpoint (/api/config), which reads a server-only env var
+// (THREE_D_BASE_URL). The URL is never baked into the frontend bundle
+// or committed to the repo. Falls back to local /public paths if the
+// server returns nothing.
+let baseUrlPromise: Promise<string> | null = null
+
+function getAssetBaseUrl(): Promise<string> {
+  if (!baseUrlPromise) {
+    baseUrlPromise = (async () => {
+      try {
+        const res = await fetch('/api/config')
+        const data = (await res.json()) as { baseUrl?: string }
+        return data.baseUrl?.trim() || ''
+      } catch {
+        return ''
+      }
+    })()
+  }
+  return baseUrlPromise
+}
+
+// Suspends until the base URL is resolved, then builds the asset URLs.
+function useAssetUrls() {
+  const baseUrl = use(getAssetBaseUrl())
+  const prefix = baseUrl || ''
+  return {
+    model: `${prefix}/new-n64cart.glb`,
+    bodyBase: `${prefix}/newbase.jpg`,
+    bodyNormal: `${prefix}/newbase_Normal.tga.png`,
+    bodyRoughness: `${prefix}/newbase_Roughness.tga.png`,
+  }
+}
+
 const FALLBACK_LABEL = '/gameart.png'
 
 /** Final width of a cartridge in world units after auto-fit. */
@@ -73,13 +106,14 @@ interface CartridgeModelProps {
  * (measured Box3 → centered, CART_WIDTH wide) and spin it 180° to face camera.
  */
 export function CartridgeModel({ labelUrl }: CartridgeModelProps) {
-  const gltf = useGLTF(MODEL_URL)
+  const { model, bodyBase, bodyNormal, bodyRoughness } = useAssetUrls()
+  const gltf = useGLTF(model)
   const labelTex = useLabelTexture(labelUrl)
 
   const shellMaps = useTexture({
-    map: '/newbase.jpg',
-    normalMap: '/newbase_Normal.tga.png',
-    roughnessMap: '/newbase_Roughness.tga.png',
+    map: bodyBase,
+    normalMap: bodyNormal,
+    roughnessMap: bodyRoughness,
   })
 
   const { root, scale, center, labelMat } = useMemo(() => {
@@ -138,8 +172,12 @@ export function CartridgeModel({ labelUrl }: CartridgeModelProps) {
   )
 }
 
-useGLTF.preload(MODEL_URL)
-useTexture.preload(FALLBACK_LABEL)
-useTexture.preload('/newbase.jpg')
-useTexture.preload('/newbase_Normal.tga.png')
-useTexture.preload('/newbase_Roughness.tga.png')
+// Preload the model and textures once the base URL is resolved.
+getAssetBaseUrl().then((baseUrl) => {
+  const prefix = baseUrl || ''
+  useGLTF.preload(`${prefix}/new-n64cart.glb`)
+  useTexture.preload(FALLBACK_LABEL)
+  useTexture.preload(`${prefix}/newbase.jpg`)
+  useTexture.preload(`${prefix}/newbase_Normal.tga.png`)
+  useTexture.preload(`${prefix}/newbase_Roughness.tga.png`)
+})
